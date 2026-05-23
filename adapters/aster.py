@@ -30,6 +30,8 @@ from models import (
     FundingRate,
     Instrument,
     OpenPosition,
+    OrderRequest,
+    OrderResult,
     Ticker,
     Trade,
     Venue,
@@ -245,3 +247,10 @@ class AsterAdapter(BaseExchangeAdapter):
 
     async def fetch_positions(self) -> list[OpenPosition]:
         return []
+
+    async def execute_order(self, request: OrderRequest) -> OrderResult:
+        raise NotImplementedError(
+            "Aster order execution requires API key + HMAC (v1) or EIP-712 "
+            "(v3) signing — deferred. Restrict strategies to Hyperliquid "
+            "until this is implemented."
+        )

@@ -130,6 +130,14 @@ class StateEngine:
         vs = self._state.get(venue)
         return [] if vs is None else list(vs.positions)
 
+    def get_adapter(self, venue: Venue) -> BaseExchangeAdapter:
+        try:
+            return self._adapters[venue]
+        except KeyError as e:
+            raise KeyError(
+                f"no adapter registered for venue {venue.value}"
+            ) from e
+
     def snapshot(self) -> dict:
         out: dict = {}
         for v, vs in self._state.items():

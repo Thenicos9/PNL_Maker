@@ -17,6 +17,8 @@ from models import (
     FundingRate,
     MarginMode,
     OpenPosition,
+    OrderRequest,
+    OrderResult,
     Side,
     Ticker,
     Trade,
@@ -36,6 +38,9 @@ class MockAdapter(BaseExchangeAdapter):
         self._base = base_price
         self._tick = tick_interval_s
         self._connected = False
+        # Testing knobs: symbols listed here will fail on execute_order.
+        self.fail_execute_symbols: set[str] = set()
+        self.executed_orders: list[OrderRequest] = []
 
     @property
     def venue(self) -> Venue:
@@ -123,6 +128,23 @@ class MockAdapter(BaseExchangeAdapter):
                 timestamp_ms=now,
             ),
         ]
+
+    # ----- Order execution (simulated) -----
+    async def execute_order(self, request: OrderRequest) -> OrderResult:
+        self.executed_orders.append(request)
+        if request.canonical_symbol in self.fail_execute_symbols:
+            return OrderResult(
+                success=False, request=request,
+                error=f"mock-forced failure on {request.canonical_symbol}",
+                timestamp_ms=self._now_ms(),
+            )
+        return OrderResult(
+            success=True, request=request,
+            filled_size=request.size,
+            avg_price=request.limit_price,
+            raw_response={"mock": True},
+            timestamp_ms=self._now_ms(),
+        )
 
     # ----- WebSocket (async generators) -----
     async def watch_normalized_ticker(

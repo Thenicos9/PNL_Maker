@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from typing import Any, AsyncIterator, Iterable, Optional
 
@@ -40,6 +41,9 @@ from models import (
     Instrument,
     MarginMode,
     OpenPosition,
+    OrderRequest,
+    OrderResult,
+    OrderType,
     Side,
     Ticker,
     Trade,
@@ -67,15 +71,24 @@ class HyperliquidAdapter(BaseExchangeAdapter):
         self,
         testnet: bool = False,
         address: Optional[str] = None,
+        private_key: Optional[str] = None,
     ) -> None:
         """`address` is the user's onchain address (0x...). Required only
         for fetch_balances / fetch_positions; public market data needs
-        none. Order placement (future Phase 5) will require a private
-        key in addition."""
+        none. `private_key` is required only for execute_order.
+
+        Both default to env vars `HL_ADDRESS` / `HL_PRIVATE_KEY` if not
+        passed. The private key is never logged, never written to disk,
+        and is read at instance construction only."""
         super().__init__()
+        self._testnet = testnet
         self._ws_url = self.TESTNET_WS if testnet else self.MAINNET_WS
         self._rest_url = self.TESTNET_REST if testnet else self.MAINNET_REST
-        self._address = address.lower() if address else None
+        env_addr = os.getenv("HL_ADDRESS")
+        env_pk = os.getenv("HL_PRIVATE_KEY")
+        self._address = (address or env_addr).lower() if (address or env_addr) else None
+        self._private_key = private_key or env_pk
+        self._exchange = None   # lazy-init at first execute_order
         self._ws: Optional[websockets.WebSocketClientProtocol] = None  # type: ignore
         self._http: Optional[aiohttp.ClientSession] = None
         self._reader_task: Optional[asyncio.Task] = None
@@ -487,6 +500,138 @@ class HyperliquidAdapter(BaseExchangeAdapter):
             log.exception("spotClearinghouseState failed")
 
         return out
+
+    # ---------- Order execution ----------
+
+    def _build_exchange(self):
+        """Lazy-instantiate the SDK Exchange. Imported here so the SDK
+        is NEVER pulled in for read-only sessions."""
+        try:
+            from hyperliquid.exchange import Exchange   # type: ignore
+            from hyperliquid.utils import constants     # type: ignore
+            from eth_account import Account             # type: ignore
+        except ImportError as e:
+            raise RuntimeError(
+                "execute_order requires `hyperliquid-python-sdk` and "
+                "`eth-account`. Install with: pip install -r requirements.txt"
+            ) from e
+
+        if not self._private_key:
+            raise RuntimeError(
+                "execute_order requires HL_PRIVATE_KEY (env var or "
+                "constructor arg). Set it in .env."
+            )
+        wallet = Account.from_key(self._private_key)
+        base_url = (constants.TESTNET_API_URL
+                    if self._testnet else constants.MAINNET_API_URL)
+        return Exchange(
+            wallet=wallet, base_url=base_url,
+            account_address=self._address or wallet.address,
+        )
+
+    async def execute_order(self, request: OrderRequest) -> OrderResult:
+        ts = int(time.time() * 1000)
+        if request.venue != self.venue:
+            return OrderResult(
+                success=False, request=request,
+                error=f"venue mismatch: req={request.venue.value} "
+                      f"adapter={self.venue.value}",
+                timestamp_ms=ts,
+            )
+        try:
+            inst = self._resolve(request.canonical_symbol)
+        except KeyError as e:
+            return OrderResult(
+                success=False, request=request, error=str(e),
+                timestamp_ms=ts,
+            )
+
+        # Lazy init SDK Exchange on first call. Sync object — we'll
+        # offload its blocking calls to the default executor.
+        if self._exchange is None:
+            try:
+                self._exchange = self._build_exchange()
+            except Exception as e:
+                return OrderResult(
+                    success=False, request=request, error=str(e),
+                    timestamp_ms=ts,
+                )
+
+        coin = inst.venue_symbol
+        is_buy = request.side == Side.BUY
+        size = float(request.size)
+        ref_price = float(request.limit_price)
+
+        if request.order_type == OrderType.MARKET:
+            slip = request.slippage_pct / 100.0
+            limit_px = ref_price * (1.0 + slip) if is_buy else ref_price * (1.0 - slip)
+            order_type = {"limit": {"tif": "Ioc"}}
+        else:
+            limit_px = ref_price
+            order_type = {"limit": {"tif": "Gtc"}}
+
+        loop = asyncio.get_running_loop()
+        try:
+            raw = await loop.run_in_executor(
+                None,
+                lambda: self._exchange.order(   # type: ignore[union-attr]
+                    name=coin,
+                    is_buy=is_buy,
+                    sz=size,
+                    limit_px=limit_px,
+                    order_type=order_type,
+                    reduce_only=request.reduce_only,
+                ),
+            )
+        except Exception as e:
+            log.exception("HL execute_order crashed")
+            return OrderResult(
+                success=False, request=request, error=str(e),
+                timestamp_ms=ts,
+            )
+
+        # Parse the SDK response shape:
+        #   {"status":"ok","response":{"type":"order","data":{
+        #       "statuses":[{"filled":{"totalSz":"...","avgPx":"...","oid":...}}]}}}
+        if not isinstance(raw, dict) or raw.get("status") != "ok":
+            return OrderResult(
+                success=False, request=request,
+                error=f"venue rejected: {raw}",
+                raw_response=raw if isinstance(raw, dict) else None,
+                timestamp_ms=ts,
+            )
+        try:
+            statuses = raw["response"]["data"]["statuses"]
+            st = statuses[0]
+        except (KeyError, IndexError, TypeError):
+            return OrderResult(
+                success=False, request=request,
+                error=f"unexpected response shape: {raw}",
+                raw_response=raw, timestamp_ms=ts,
+            )
+
+        filled = st.get("filled")
+        if filled is not None:
+            return OrderResult(
+                success=True, request=request,
+                filled_size=float(filled.get("totalSz", 0.0)),
+                avg_price=float(filled.get("avgPx", 0.0)),
+                raw_response=raw, timestamp_ms=ts,
+            )
+        resting = st.get("resting")
+        if resting is not None:
+            # IOC should never rest; this means MARKET fell through.
+            return OrderResult(
+                success=False, request=request,
+                error=f"order resting unexpectedly (oid={resting.get('oid')}); "
+                      f"venue may not have liquidity at our slippage bound",
+                raw_response=raw, timestamp_ms=ts,
+            )
+        err = st.get("error") or st
+        return OrderResult(
+            success=False, request=request, error=str(err),
+            raw_response=raw, timestamp_ms=ts,
+        )
 
     async def fetch_positions(self) -> list[OpenPosition]:
         if self._address is None:

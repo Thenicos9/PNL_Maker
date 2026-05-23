@@ -12,6 +12,8 @@ from models import (
     FundingRate,
     Instrument,
     OpenPosition,
+    OrderRequest,
+    OrderResult,
     Ticker,
     Trade,
     Venue,
@@ -91,3 +93,13 @@ class BaseExchangeAdapter(ABC):
     def watch_normalized_funding_rate(
         self, canonical_symbol: str
     ) -> AsyncIterator[FundingRate]: ...
+
+    # ---------- Order execution ----------
+
+    @abstractmethod
+    async def execute_order(self, request: OrderRequest) -> OrderResult:
+        """Send `request` to the venue and return a normalized OrderResult.
+        Implementations MUST NOT raise on order-level failures — they
+        return `success=False` with a populated `error` field. They MAY
+        raise only on programming errors (wrong instrument, missing
+        credentials)."""

@@ -32,6 +32,8 @@ from models import (
     FundingRate,
     Instrument,
     OpenPosition,
+    OrderRequest,
+    OrderResult,
     Ticker,
     Trade,
     Venue,
@@ -262,3 +264,10 @@ class LighterAdapter(BaseExchangeAdapter):
 
     async def fetch_positions(self) -> list[OpenPosition]:
         return []
+
+    async def execute_order(self, request: OrderRequest) -> OrderResult:
+        raise NotImplementedError(
+            "Lighter order execution requires signed L1 auth — deferred. "
+            "Until then, restrict strategies to venues with execute_order "
+            "implemented (currently only Hyperliquid)."
+        )

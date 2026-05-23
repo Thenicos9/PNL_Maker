@@ -148,6 +148,59 @@ class OpenPosition:
         return abs(self.size)
 
 
+class OrderType(str, Enum):
+    MARKET = "MARKET"
+    LIMIT = "LIMIT"
+
+
+@dataclass
+class OrderRequest:
+    """An order the executor wants to send to a venue. Always normalized.
+    `limit_price` is the worst-acceptable price for MARKET orders (we send
+    them as IOC limits to cap slippage). `margin_account` MUST match an
+    actual pool the venue exposes — for HL that means `"cross-usdc"`,
+    `"spot-USDC"`, or a HIP-3 sub-account id like `"isolated-ena-usde"`."""
+    venue: Venue
+    canonical_symbol: str
+    side: Side
+    size: float
+    order_type: OrderType
+    limit_price: float
+    margin_account: str
+    reduce_only: bool = False
+    slippage_pct: float = 0.10   # applied only for MARKET orders
+
+
+@dataclass
+class OrderResult:
+    success: bool
+    request: "OrderRequest"
+    filled_size: float = 0.0
+    avg_price: Optional[float] = None
+    error: Optional[str] = None
+    raw_response: Optional[dict] = None
+    timestamp_ms: int = 0
+
+
+@dataclass
+class ExecutionReport:
+    opportunity: "Opportunity"
+    size_requested: float
+    dry_run: bool
+    long_result: Optional[OrderResult]
+    short_result: Optional[OrderResult]
+    blocked_reason: Optional[str] = None
+
+    @property
+    def success(self) -> bool:
+        if self.blocked_reason is not None:
+            return False
+        return bool(
+            self.long_result and self.long_result.success
+            and self.short_result and self.short_result.success
+        )
+
+
 @dataclass(frozen=True)
 class FeeSchedule:
     """Per-venue taker/maker fees in percent (e.g. 0.035 = 3.5 bps).
