@@ -116,6 +116,40 @@ class MarginBalance:
     timestamp_ms: int
 
 
+@dataclass(frozen=True)
+class FeeSchedule:
+    """Per-venue taker/maker fees in percent (e.g. 0.035 = 3.5 bps).
+    Loaded from registry.json under venues.<name>.fees."""
+    spot_taker_pct: float = 0.0
+    spot_maker_pct: float = 0.0
+    perp_taker_pct: float = 0.0
+    perp_maker_pct: float = 0.0
+
+
+@dataclass(frozen=True)
+class Opportunity:
+    """A directional basis trade evaluated at the current top-of-book.
+    `long_*` is the leg we BUY (at ask, taker). `short_*` is the leg we
+    SELL (at bid, taker). All spread/fee figures are in percent of
+    notional. `funding_apr_pct` is annualized; SPOT legs contribute 0."""
+    strategy_name: str
+    direction: str
+    long_venue: Venue
+    long_symbol: str
+    long_ask: float
+    long_ask_size: float
+    short_venue: Venue
+    short_symbol: str
+    short_bid: float
+    short_bid_size: float
+    max_executable_size: float
+    gross_spread_pct: float
+    fees_pct: float
+    net_spread_pct: float
+    funding_apr_pct: float
+    timestamp_ms: int
+
+
 @dataclass
 class Position:
     venue: Venue

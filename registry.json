@@ -1,11 +1,41 @@
 {
   "venues": {
-    "hyperliquid": {"enabled": true},
-    "lighter":     {"enabled": false},
-    "aster":       {"enabled": false},
-    "mock":        {"enabled": true}
+    "hyperliquid": {
+      "enabled": true,
+      "fees": {
+        "spot_taker_pct": 0.07,
+        "spot_maker_pct": 0.04,
+        "perp_taker_pct": 0.035,
+        "perp_maker_pct": 0.01
+      }
+    },
+    "lighter": {
+      "enabled": false,
+      "fees": {
+        "perp_taker_pct": 0.0,
+        "perp_maker_pct": 0.0
+      }
+    },
+    "aster":   {
+      "enabled": false,
+      "fees": {
+        "perp_taker_pct": 0.035,
+        "perp_maker_pct": 0.01
+      }
+    },
+    "mock":    {
+      "enabled": true,
+      "fees": {
+        "spot_taker_pct": 0.05,
+        "spot_maker_pct": 0.02,
+        "perp_taker_pct": 0.03,
+        "perp_maker_pct": 0.01
+      }
+    }
   },
+
   "tokens": ["HYPE", "USDC", "USDE", "BTC", "ETH", "ENA"],
+
   "instruments": [
     {
       "canonical_symbol": "HYPE/USDC:SPOT",
@@ -41,5 +71,23 @@
       }
     }
   ],
-  "strategies": []
+
+  "strategies": [
+    {
+      "name": "hype-spot-vs-perp",
+      "leg_a": {"venue": "hyperliquid", "canonical_symbol": "HYPE/USDC:SPOT"},
+      "leg_b": {"venue": "hyperliquid", "canonical_symbol": "HYPE/USDC:PERP"},
+      "min_net_spread_pct":   0.05,
+      "min_funding_apr_pct":  5.0,
+      "min_executable_size":  1.0
+    },
+    {
+      "name": "hype-perp-usdc-vs-usde-hip3",
+      "leg_a": {"venue": "hyperliquid", "canonical_symbol": "HYPE/USDC:PERP"},
+      "leg_b": {"venue": "hyperliquid", "canonical_symbol": "HYPE/USDE:PERP"},
+      "min_net_spread_pct":   0.05,
+      "min_funding_apr_pct":  5.0,
+      "min_executable_size":  1.0
+    }
+  ]
 }
