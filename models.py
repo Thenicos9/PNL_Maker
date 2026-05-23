@@ -6,9 +6,9 @@ strategy engine, executor) talks only in these terms.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 
 class Venue(str, Enum):
@@ -26,6 +26,7 @@ class InstrumentType(str, Enum):
 class MarginMode(str, Enum):
     CROSS = "CROSS"
     ISOLATED = "ISOLATED"
+    SPOT = "SPOT"
 
 
 class Side(str, Enum):
@@ -39,7 +40,9 @@ class Instrument:
     (e.g. "HYPE/USDC:PERP"); `venue_symbol` is what the venue uses on the wire.
     `margin_account` identifies which collateral pool this instrument settles
     against on its venue (e.g. "cross-usdc" for native HL perps,
-    "isolated-ena-usde" for the ENA HIP-3 dex)."""
+    "isolated-ena-usde" for the ENA HIP-3 dex). `venue_extras` carries any
+    extra venue-specific identifiers (e.g. Lighter's market_id) that don't
+    fit into the canonical fields."""
     canonical_symbol: str
     venue: Venue
     venue_symbol: str
@@ -48,6 +51,7 @@ class Instrument:
     quote: str
     margin_account: str = "default"
     hip3: bool = False
+    venue_extras: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -102,18 +106,46 @@ class Trade:
 
 
 @dataclass
-class MarginBalance:
-    """One row per *margin account* on a venue. Hyperliquid will produce
-    one row for the cross USDC perp account plus one row per HIP-3 isolated
-    sub-account (e.g. USDe under the ENA dex)."""
+class Balance:
+    """One row per *margin account* on a venue. Hyperliquid produces one row
+    for the cross USDC perp account, one row per HIP-3 isolated sub-account
+    (e.g. USDe under the ENA dex), and one row per spot token holding.
+
+    Fields use the trader's vocabulary: `total = used + free` (in quote
+    currency)."""
     venue: Venue
-    account: str            # canonical id matching Instrument.margin_account
-    quote_ccy: str          # USDC, USDE, BTC, ...
-    account_value: float    # equity incl. unrealized PnL
-    total_margin_used: float
-    free_margin: float
+    account: str       # canonical id matching Instrument.margin_account
+    quote_ccy: str     # USDC, USDE, BTC, ...
+    total: float       # equity (account_value)
+    used: float        # margin currently locked
+    free: float        # withdrawable / available
     mode: MarginMode
     timestamp_ms: int
+
+
+@dataclass
+class OpenPosition:
+    """Open derivative or spot position. `size` is signed (+ long / - short)
+    for math convenience; `side` is a derived property. `margin_account`
+    routes the position to the correct collateral pool (critical for HL
+    HIP-3 sub-accounts)."""
+    venue: Venue
+    canonical_symbol: str
+    margin_account: str
+    size: float
+    entry_price: float
+    mark_price: float
+    unrealized_pnl: float
+    mode: MarginMode
+    timestamp_ms: int
+
+    @property
+    def side(self) -> Side:
+        return Side.BUY if self.size >= 0 else Side.SELL
+
+    @property
+    def magnitude(self) -> float:
+        return abs(self.size)
 
 
 @dataclass(frozen=True)
@@ -147,17 +179,4 @@ class Opportunity:
     fees_pct: float
     net_spread_pct: float
     funding_apr_pct: float
-    timestamp_ms: int
-
-
-@dataclass
-class Position:
-    venue: Venue
-    canonical_symbol: str
-    margin_account: str
-    size: float             # signed: + long, - short, base units
-    entry_price: float
-    mark_price: float
-    unrealized_pnl: float
-    mode: MarginMode
     timestamp_ms: int

@@ -16,7 +16,9 @@ ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
 from adapters.hyperliquid import HyperliquidAdapter   # noqa: E402
-from models import Side, Venue                        # noqa: E402
+from models import (                                  # noqa: E402
+    Instrument, InstrumentType, MarginMode, Side, Venue,
+)
 
 
 def test_parse_l2book_native_perp() -> None:
@@ -109,6 +111,170 @@ def test_parse_trade() -> None:
 
     sell_payload = {**payload, "side": "A"}
     assert HyperliquidAdapter.parse_trade(sell_payload, "X").side == Side.SELL
+
+
+def test_parse_clearinghouse_state_cross_perp() -> None:
+    insts = [
+        Instrument(
+            canonical_symbol="HYPE/USDC:PERP", venue=Venue.HYPERLIQUID,
+            venue_symbol="HYPE", type=InstrumentType.PERP,
+            base="HYPE", quote="USDC", margin_account="cross-usdc",
+        ),
+        Instrument(
+            canonical_symbol="ETH/USDC:PERP", venue=Venue.HYPERLIQUID,
+            venue_symbol="ETH", type=InstrumentType.PERP,
+            base="ETH", quote="USDC", margin_account="cross-usdc",
+        ),
+    ]
+    payload = {
+        "marginSummary": {
+            "accountValue": "13109.482328",
+            "totalNtlPos": "5972.6",
+            "totalRawUsd": "7136.882328",
+            "totalMarginUsed": "597.26",
+        },
+        "crossMarginSummary": {
+            "accountValue": "13109.482328",
+            "totalMarginUsed": "597.26",
+        },
+        "withdrawable": "12512.222328",
+        "assetPositions": [
+            {
+                "type": "oneWay",
+                "position": {
+                    "coin": "ETH",
+                    "szi": "2.0",
+                    "entryPx": "2986.3",
+                    "positionValue": "5972.6",
+                    "marginUsed": "597.26",
+                    "leverage": {"type": "cross", "value": 10},
+                    "unrealizedPnl": "0.0",
+                    "liquidationPx": "2866.26936529",
+                },
+            },
+            {
+                "type": "oneWay",
+                "position": {
+                    "coin": "HYPE",
+                    "szi": "-15.0",
+                    "entryPx": "100.0",
+                    "positionValue": "1485.0",
+                    "marginUsed": "148.5",
+                    "leverage": {"type": "cross", "value": 10},
+                    "unrealizedPnl": "+15.0",
+                    "liquidationPx": "110.0",
+                },
+            },
+            {
+                "type": "oneWay",
+                "position": {
+                    "coin": "BTC",   # not in our registry → skipped
+                    "szi": "0.01", "entryPx": "60000",
+                    "positionValue": "600", "marginUsed": "60",
+                    "leverage": {"type": "cross", "value": 10},
+                    "unrealizedPnl": "0",
+                },
+            },
+        ],
+        "time": 1_734_000_000_000,
+    }
+    bal, positions = HyperliquidAdapter.parse_clearinghouse_state(
+        payload, insts,
+        margin_account="cross-usdc", mode=MarginMode.CROSS,
+        quote_ccy="USDC", ts_ms=1_734_000_000_000,
+    )
+    assert bal is not None
+    assert bal.account == "cross-usdc"
+    assert bal.quote_ccy == "USDC"
+    assert abs(bal.total - 13109.482328) < 1e-6
+    assert abs(bal.used - 597.26) < 1e-6
+    assert abs(bal.free - 12512.222328) < 1e-6
+    assert bal.mode == MarginMode.CROSS
+
+    assert len(positions) == 2, f"expected 2 positions, got {len(positions)}"
+    eth = next(p for p in positions if p.canonical_symbol == "ETH/USDC:PERP")
+    hype = next(p for p in positions if p.canonical_symbol == "HYPE/USDC:PERP")
+    assert eth.size == 2.0
+    assert eth.side == Side.BUY
+    assert eth.margin_account == "cross-usdc"
+    assert eth.mode == MarginMode.CROSS
+    assert hype.size == -15.0
+    assert hype.side == Side.SELL
+    assert abs(hype.unrealized_pnl - 15.0) < 1e-9
+
+
+def test_parse_clearinghouse_state_hip3_isolated() -> None:
+    insts = [
+        Instrument(
+            canonical_symbol="HYPE/USDE:PERP", venue=Venue.HYPERLIQUID,
+            venue_symbol="ENA:HYPE", type=InstrumentType.PERP,
+            base="HYPE", quote="USDE",
+            margin_account="isolated-ena-usde", hip3=True,
+        ),
+    ]
+    payload = {
+        "marginSummary": {
+            "accountValue": "2500.0",
+            "totalMarginUsed": "150.0",
+        },
+        "withdrawable": "2350.0",
+        "assetPositions": [
+            {
+                "type": "oneWay",
+                "position": {
+                    "coin": "ENA:HYPE",
+                    "szi": "5.0",
+                    "entryPx": "10.5",
+                    "positionValue": "52.5",
+                    "marginUsed": "5.25",
+                    "leverage": {"type": "isolated", "value": 10},
+                    "unrealizedPnl": "0.0",
+                },
+            },
+        ],
+    }
+    bal, positions = HyperliquidAdapter.parse_clearinghouse_state(
+        payload, insts,
+        margin_account="isolated-ena-usde", mode=MarginMode.ISOLATED,
+        quote_ccy="USDE", ts_ms=1_734_000_000_000,
+    )
+    assert bal is not None
+    assert bal.account == "isolated-ena-usde"
+    assert bal.quote_ccy == "USDE"
+    assert bal.mode == MarginMode.ISOLATED
+    assert bal.total == 2500.0
+    assert bal.used == 150.0
+    assert bal.free == 2350.0
+
+    assert len(positions) == 1
+    p = positions[0]
+    assert p.canonical_symbol == "HYPE/USDE:PERP"
+    assert p.margin_account == "isolated-ena-usde"
+    assert p.mode == MarginMode.ISOLATED
+    assert p.size == 5.0
+
+
+def test_parse_spot_clearinghouse_state() -> None:
+    payload = {
+        "balances": [
+            {"coin": "USDC", "token": 0, "hold": "0.0",
+             "total": "14.625485", "entryNtl": "0.0"},
+            {"coin": "PURR", "token": 1, "hold": "0",
+             "total": "2000", "entryNtl": "1234.56"},
+        ]
+    }
+    bals = HyperliquidAdapter.parse_spot_clearinghouse_state(
+        payload, ts_ms=1_734_000_000_000,
+    )
+    assert len(bals) == 2
+    usdc = next(b for b in bals if b.quote_ccy == "USDC")
+    purr = next(b for b in bals if b.quote_ccy == "PURR")
+    assert abs(usdc.total - 14.625485) < 1e-6
+    assert usdc.used == 0.0
+    assert usdc.free == 14.625485
+    assert usdc.mode == MarginMode.SPOT
+    assert purr.total == 2000.0
+    assert purr.account == "spot-PURR"
 
 
 def _run_all() -> None:

@@ -54,8 +54,8 @@
       "quote": "USDC",
       "venues": {
         "hyperliquid": {"symbol": "HYPE",         "margin_account": "cross-usdc"},
-        "lighter":     {"symbol": "HYPE-PERP",    "margin_account": "cross-usdc"},
-        "aster":       {"symbol": "HYPEUSDT",     "margin_account": "cross-usdt"},
+        "lighter":     {"symbol": "14",           "market_id_note": "HYPE-PERP placeholder; verify Lighter market_id locally", "margin_account": "cross-usdc"},
+        "aster":       {"symbol": "HYPEUSDT",     "symbol_note": "verify Aster lists this market", "margin_account": "cross-usdt"},
         "mock":        {"symbol": "HYPE-USDC",    "margin_account": "cross-usdc"}
       }
     },

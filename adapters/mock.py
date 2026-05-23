@@ -1,7 +1,7 @@
 """Mock adapter. Proves the BaseExchangeAdapter contract is sufficient to
 drive the StateEngine without anyone outside this folder ever importing a
-venue SDK. Real adapters (hyperliquid.py, lighter.py, aster.py) will sit
-next to this file and follow the same shape.
+venue SDK. Real adapters (hyperliquid.py, lighter.py, aster.py) follow
+the same shape.
 """
 from __future__ import annotations
 
@@ -13,10 +13,10 @@ from typing import AsyncIterator
 
 from interfaces import BaseExchangeAdapter
 from models import (
+    Balance,
     FundingRate,
-    MarginBalance,
     MarginMode,
-    Position,
+    OpenPosition,
     Side,
     Ticker,
     Trade,
@@ -47,7 +47,6 @@ class MockAdapter(BaseExchangeAdapter):
     async def close(self) -> None:
         self._connected = False
 
-    # ----- helpers -----
     @staticmethod
     def _now_ms() -> int:
         return int(time.time() * 1000)
@@ -85,32 +84,45 @@ class MockAdapter(BaseExchangeAdapter):
             predicted_rate=0.00012,
         )
 
-    async def fetch_normalized_balances(self) -> list[MarginBalance]:
+    async def fetch_balances(self) -> list[Balance]:
+        now = self._now_ms()
         return [
-            MarginBalance(
-                venue=self._venue,
-                account="cross-usdc",
-                quote_ccy="USDC",
-                account_value=10_000.0,
-                total_margin_used=0.0,
-                free_margin=10_000.0,
-                mode=MarginMode.CROSS,
-                timestamp_ms=self._now_ms(),
+            Balance(
+                venue=self._venue, account="cross-usdc", quote_ccy="USDC",
+                total=10_000.0, used=1_500.0, free=8_500.0,
+                mode=MarginMode.CROSS, timestamp_ms=now,
             ),
-            MarginBalance(
-                venue=self._venue,
-                account="isolated-ena-usde",
-                quote_ccy="USDE",
-                account_value=2_500.0,
-                total_margin_used=0.0,
-                free_margin=2_500.0,
-                mode=MarginMode.ISOLATED,
-                timestamp_ms=self._now_ms(),
+            Balance(
+                venue=self._venue, account="isolated-ena-usde", quote_ccy="USDE",
+                total=2_500.0, used=500.0, free=2_000.0,
+                mode=MarginMode.ISOLATED, timestamp_ms=now,
+            ),
+            Balance(
+                venue=self._venue, account="spot", quote_ccy="USDC",
+                total=300.0, used=0.0, free=300.0,
+                mode=MarginMode.SPOT, timestamp_ms=now,
             ),
         ]
 
-    async def fetch_normalized_positions(self) -> list[Position]:
-        return []
+    async def fetch_positions(self) -> list[OpenPosition]:
+        now = self._now_ms()
+        p = self._price()
+        return [
+            OpenPosition(
+                venue=self._venue, canonical_symbol="HYPE/USDC:PERP",
+                margin_account="cross-usdc",
+                size=-5.0, entry_price=p + 1.0, mark_price=p,
+                unrealized_pnl=5.0, mode=MarginMode.CROSS,
+                timestamp_ms=now,
+            ),
+            OpenPosition(
+                venue=self._venue, canonical_symbol="HYPE/USDE:PERP",
+                margin_account="isolated-ena-usde",
+                size=5.0, entry_price=p - 1.0, mark_price=p,
+                unrealized_pnl=5.0, mode=MarginMode.ISOLATED,
+                timestamp_ms=now,
+            ),
+        ]
 
     # ----- WebSocket (async generators) -----
     async def watch_normalized_ticker(

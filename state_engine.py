@@ -2,6 +2,12 @@
 
 Talks only to BaseExchangeAdapter instances and models.py dataclasses.
 Knows nothing about CCXT, REST, or WebSocket protocols.
+
+Three concurrent pipelines per registered adapter:
+  - per-instrument ticker stream      → InstrumentState.ticker
+  - per-instrument funding stream     → InstrumentState.funding
+  - per-instrument trades stream      → InstrumentState.last_trade
+  - per-adapter account refresh loop  → VenueState.balances + positions
 """
 from __future__ import annotations
 
@@ -14,11 +20,11 @@ from typing import Optional
 
 from interfaces import BaseExchangeAdapter
 from models import (
+    Balance,
     FundingRate,
     Instrument,
     InstrumentType,
-    MarginBalance,
-    Position,
+    OpenPosition,
     Ticker,
     Trade,
     Venue,
@@ -38,16 +44,22 @@ class InstrumentState:
 @dataclass
 class VenueState:
     instruments: dict[str, InstrumentState] = field(default_factory=dict)
-    balances: list[MarginBalance] = field(default_factory=list)
-    positions: list[Position] = field(default_factory=list)
+    balances: list[Balance] = field(default_factory=list)
+    positions: list[OpenPosition] = field(default_factory=list)
+    last_account_refresh_ms: int = 0
 
 
 class StateEngine:
-    def __init__(self, registry_path: str | Path = "registry.json") -> None:
+    def __init__(
+        self,
+        registry_path: str | Path = "registry.json",
+        account_refresh_s: float = 5.0,
+    ) -> None:
         self._registry = json.loads(Path(registry_path).read_text())
         self._adapters: dict[Venue, BaseExchangeAdapter] = {}
         self._state: dict[Venue, VenueState] = {}
         self._tasks: list[asyncio.Task] = []
+        self._account_refresh_s = account_refresh_s
 
     # ---------- Setup ----------
 
@@ -69,6 +81,10 @@ class StateEngine:
             venue_cfg = entry.get("venues", {}).get(venue.value)
             if venue_cfg is None:
                 continue
+            extras = {
+                k: v for k, v in venue_cfg.items()
+                if k not in ("symbol", "margin_account")
+            }
             out.append(
                 Instrument(
                     canonical_symbol=entry["canonical_symbol"],
@@ -81,6 +97,7 @@ class StateEngine:
                         "margin_account", "default"
                     ),
                     hip3=entry.get("hip3", False),
+                    venue_extras=extras,
                 )
             )
         return out
@@ -105,6 +122,14 @@ class StateEngine:
         st = vs.instruments.get(canonical_symbol)
         return None if st is None else st.funding
 
+    def get_balances(self, venue: Venue) -> list[Balance]:
+        vs = self._state.get(venue)
+        return [] if vs is None else list(vs.balances)
+
+    def get_positions(self, venue: Venue) -> list[OpenPosition]:
+        vs = self._state.get(venue)
+        return [] if vs is None else list(vs.positions)
+
     def snapshot(self) -> dict:
         out: dict = {}
         for v, vs in self._state.items():
@@ -119,6 +144,7 @@ class StateEngine:
                 },
                 "balances": list(vs.balances),
                 "positions": list(vs.positions),
+                "last_account_refresh_ms": vs.last_account_refresh_ms,
             }
         return out
 
@@ -139,15 +165,22 @@ class StateEngine:
         if st is not None:
             st.last_trade = tr
 
+    def _ingest_account(
+        self,
+        venue: Venue,
+        balances: list[Balance],
+        positions: list[OpenPosition],
+        ts_ms: int,
+    ) -> None:
+        vs = self._state[venue]
+        vs.balances = balances
+        vs.positions = positions
+        vs.last_account_refresh_ms = ts_ms
+
     # ---------- Streaming runners ----------
 
     async def _stream(
-        self,
-        agen,
-        ingest,
-        venue: Venue,
-        symbol: str,
-        kind: str,
+        self, agen, ingest, venue: Venue, symbol: str, kind: str,
     ) -> None:
         try:
             async for item in agen:
@@ -159,6 +192,26 @@ class StateEngine:
                 "%s stream crashed venue=%s sym=%s",
                 kind, venue.value, symbol,
             )
+
+    async def _account_refresher(
+        self, adapter: BaseExchangeAdapter
+    ) -> None:
+        import time
+        venue = adapter.venue
+        while True:
+            try:
+                balances = await adapter.fetch_balances()
+                positions = await adapter.fetch_positions()
+                self._ingest_account(
+                    venue, balances, positions, int(time.time() * 1000)
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception(
+                    "account refresh failed for %s", venue.value
+                )
+            await asyncio.sleep(self._account_refresh_s)
 
     async def start(self) -> None:
         for venue, adapter in self._adapters.items():
@@ -176,6 +229,10 @@ class StateEngine:
                     adapter.watch_normalized_trades(sym),
                     self._ingest_trade, venue, sym, "trade",
                 )))
+            # one account-refresh loop per adapter
+            self._tasks.append(asyncio.create_task(
+                self._account_refresher(adapter)
+            ))
 
     async def stop(self) -> None:
         for t in self._tasks:

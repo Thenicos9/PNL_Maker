@@ -8,13 +8,13 @@ from abc import ABC, abstractmethod
 from typing import AsyncIterator
 
 from models import (
-    Venue,
-    Ticker,
+    Balance,
     FundingRate,
-    Trade,
     Instrument,
-    MarginBalance,
-    Position,
+    OpenPosition,
+    Ticker,
+    Trade,
+    Venue,
 )
 
 
@@ -46,6 +46,9 @@ class BaseExchangeAdapter(ABC):
                 f"{canonical_symbol}; call register_instrument first"
             ) from e
 
+    def instruments(self) -> list[Instrument]:
+        return list(self._instruments.values())
+
     @abstractmethod
     async def connect(self) -> None: ...
 
@@ -63,14 +66,16 @@ class BaseExchangeAdapter(ABC):
     ) -> FundingRate: ...
 
     @abstractmethod
-    async def fetch_normalized_balances(self) -> list[MarginBalance]: ...
+    async def fetch_balances(self) -> list[Balance]:
+        """All margin accounts on this venue for the configured user.
+        Returns [] for read-only public adapters with no user context."""
 
     @abstractmethod
-    async def fetch_normalized_positions(self) -> list[Position]: ...
+    async def fetch_positions(self) -> list[OpenPosition]:
+        """All open derivative positions for the configured user.
+        Returns [] for read-only public adapters with no user context."""
 
     # ---------- Streaming (async generators) ----------
-    # Implementations are `async def ...: yield`. Callers use
-    # `async for x in adapter.watch_normalized_ticker(symbol)`.
 
     @abstractmethod
     def watch_normalized_ticker(
