@@ -1,0 +1,45 @@
+{
+  "venues": {
+    "hyperliquid": {"enabled": true},
+    "lighter":     {"enabled": false},
+    "aster":       {"enabled": false},
+    "mock":        {"enabled": true}
+  },
+  "tokens": ["HYPE", "USDC", "USDE", "BTC", "ETH", "ENA"],
+  "instruments": [
+    {
+      "canonical_symbol": "HYPE/USDC:SPOT",
+      "type": "SPOT",
+      "base": "HYPE",
+      "quote": "USDC",
+      "venues": {
+        "hyperliquid": {"symbol": "HYPE/USDC", "margin_account": "spot"},
+        "mock":        {"symbol": "HYPE/USDC", "margin_account": "spot"}
+      }
+    },
+    {
+      "canonical_symbol": "HYPE/USDC:PERP",
+      "type": "PERP",
+      "base": "HYPE",
+      "quote": "USDC",
+      "venues": {
+        "hyperliquid": {"symbol": "HYPE",         "margin_account": "cross-usdc"},
+        "lighter":     {"symbol": "HYPE-PERP",    "margin_account": "cross-usdc"},
+        "aster":       {"symbol": "HYPEUSDT",     "margin_account": "cross-usdt"},
+        "mock":        {"symbol": "HYPE-USDC",    "margin_account": "cross-usdc"}
+      }
+    },
+    {
+      "canonical_symbol": "HYPE/USDE:PERP",
+      "type": "PERP",
+      "base": "HYPE",
+      "quote": "USDE",
+      "hip3": true,
+      "venues": {
+        "hyperliquid": {"symbol": "ENA:HYPE", "margin_account": "isolated-ena-usde", "deployer_dex": "ENA"},
+        "mock":        {"symbol": "HYPE-USDE", "margin_account": "isolated-ena-usde"}
+      }
+    }
+  ],
+  "strategies": []
+}
