@@ -12,15 +12,39 @@ from models import (
     Ticker,
     FundingRate,
     Trade,
+    Instrument,
     MarginBalance,
     Position,
 )
 
 
 class BaseExchangeAdapter(ABC):
+    def __init__(self) -> None:
+        self._instruments: dict[str, Instrument] = {}
+
     @property
     @abstractmethod
     def venue(self) -> Venue: ...
+
+    def register_instrument(self, instrument: Instrument) -> None:
+        """Declare an instrument the adapter will be asked to stream.
+        Concrete adapters MAY override to build reverse indexes (e.g.
+        venue_symbol → canonical_symbol) — must call super()."""
+        if instrument.venue != self.venue:
+            raise ValueError(
+                f"instrument venue {instrument.venue.value} "
+                f"!= adapter venue {self.venue.value}"
+            )
+        self._instruments[instrument.canonical_symbol] = instrument
+
+    def _resolve(self, canonical_symbol: str) -> Instrument:
+        try:
+            return self._instruments[canonical_symbol]
+        except KeyError as e:
+            raise KeyError(
+                f"{self.venue.value} adapter not configured for "
+                f"{canonical_symbol}; call register_instrument first"
+            ) from e
 
     @abstractmethod
     async def connect(self) -> None: ...

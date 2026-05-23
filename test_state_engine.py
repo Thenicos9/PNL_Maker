@@ -68,13 +68,20 @@ async def _run() -> None:
     for sym, st in instruments.items():
         t = st["ticker"]
         f = st["funding"]
-        print(f"  {sym:24s} last={t.last if t else None}  "
+        print(f"  {sym:24s} bid={t.bid:.4f} ask={t.ask:.4f} "
+              f"bid_sz={t.bid_size:.3f} ask_sz={t.ask_size:.3f} "
+              f"spread_bps={t.spread_bps:.2f}  "
               f"fundingRate={f.rate if f else None}  "
               f"interval_s={f.interval_seconds if f else None}")
 
     assert tickers == len(instruments), "not every instrument got a ticker"
     assert trades >= 1, "no trades ingested"
     assert funding >= 1, "no funding ingested"
+    for st in instruments.values():
+        t = st["ticker"]
+        assert t.bid > 0 and t.ask > 0, "bid/ask must be populated"
+        assert t.bid_size > 0 and t.ask_size > 0, "sizes must be populated"
+        assert t.ask >= t.bid, "ask must be >= bid"
     print("OK: StateEngine ingested data from an unknown adapter "
           "without importing any venue SDK.")
 

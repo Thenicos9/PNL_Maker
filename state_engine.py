@@ -61,6 +61,7 @@ class StateEngine:
             vs.instruments[inst.canonical_symbol] = InstrumentState(
                 instrument=inst
             )
+            adapter.register_instrument(inst)
 
     def _instruments_for(self, venue: Venue) -> list[Instrument]:
         out: list[Instrument] = []

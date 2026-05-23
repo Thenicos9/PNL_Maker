@@ -52,12 +52,27 @@ class Instrument:
 
 @dataclass
 class Ticker:
+    """Top-of-book snapshot. For basis trading we MUST execute against
+    `bid`/`ask` and check the available sizes, never against `last`.
+    `last` is kept for display/logging only (mid by convention when the
+    venue exposes only a book)."""
     venue: Venue
     canonical_symbol: str
+    bid: float
+    ask: float
+    bid_size: float
+    ask_size: float
     last: float
-    bid: Optional[float]
-    ask: Optional[float]
     timestamp_ms: int
+
+    @property
+    def mid(self) -> float:
+        return (self.bid + self.ask) / 2.0
+
+    @property
+    def spread_bps(self) -> float:
+        m = self.mid
+        return 0.0 if m == 0 else (self.ask - self.bid) / m * 10_000.0
 
 
 @dataclass

@@ -31,6 +31,7 @@ class MockAdapter(BaseExchangeAdapter):
         base_price: float = 100.0,
         tick_interval_s: float = 0.05,
     ) -> None:
+        super().__init__()
         self._venue = venue
         self._base = base_price
         self._tick = tick_interval_s
@@ -62,9 +63,11 @@ class MockAdapter(BaseExchangeAdapter):
         return Ticker(
             venue=self._venue,
             canonical_symbol=canonical_symbol,
-            last=p,
             bid=p - 0.05,
             ask=p + 0.05,
+            bid_size=10.0 + random.random() * 5.0,
+            ask_size=10.0 + random.random() * 5.0,
+            last=p,
             timestamp_ms=self._now_ms(),
         )
 
